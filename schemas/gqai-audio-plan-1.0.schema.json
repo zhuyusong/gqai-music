@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gqai.local/schemas/gqai-audio-plan-1.0.json",
+  "title": "GQAI audio plan 1.0",
+  "type": "object",
+  "required": ["schema", "clock", "music_tracks", "ambience_tracks", "sound_effects", "mix"],
+  "properties": {
+    "schema": {"const": "gqai-audio-plan-1.0"},
+    "clock": {
+      "type": "object",
+      "required": ["fps", "duration_frames", "frame_contract"],
+      "properties": {
+        "fps": {"type": "integer", "minimum": 1},
+        "duration_frames": {"type": "integer", "minimum": 1},
+        "frame_contract": {"const": "zero-based half-open [start, end)"}
+      }
+    },
+    "music_tracks": {"type": "array"},
+    "ambience_tracks": {"type": "array"},
+    "sound_effects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sound_id", "anchor_event_id", "offset_frames", "duration_frames", "volume"],
+        "properties": {
+          "sound_id": {"type": "string", "minLength": 1},
+          "anchor_event_id": {"type": "string", "minLength": 1},
+          "offset_frames": {"type": "integer"},
+          "duration_frames": {"type": "integer", "minimum": 1},
+          "volume": {"type": "number", "minimum": 0},
+          "asset_uri": {"type": "string"},
+          "asset_offset_seconds": {"type": "number", "minimum": 0},
+          "fade_in_frames": {"type": "integer", "minimum": 0},
+          "fade_out_frames": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "mix": {"type": "object"}
+  }
+}

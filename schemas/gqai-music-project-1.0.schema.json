@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gqai.local/schemas/gqai-music-project-1.0.json",
+  "title": "GQAI music project 1.0",
+  "type": "object",
+  "required": ["schema", "project_id", "source", "mix"],
+  "properties": {
+    "schema": {"const": "gqai-music-project-1.0"},
+    "project_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "source": {
+      "type": "object",
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "music": {
+      "type": "object",
+      "required": ["uri", "sha256"],
+      "properties": {
+        "uri": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "mix": {
+      "type": "object",
+      "required": ["volume_percent", "video_start_seconds", "music_in_seconds", "loop", "fade_in_seconds", "fade_out_seconds", "voice_ducking"],
+      "properties": {
+        "volume_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "video_start_seconds": {"type": "number", "minimum": 0},
+        "music_in_seconds": {"type": "number", "minimum": 0},
+        "loop": {"type": "boolean"},
+        "fade_in_seconds": {"type": "number", "minimum": 0, "maximum": 30},
+        "fade_out_seconds": {"type": "number", "minimum": 0, "maximum": 30},
+        "voice_ducking": {"type": "boolean"}
+      }
+    }
+  }
+}
+
