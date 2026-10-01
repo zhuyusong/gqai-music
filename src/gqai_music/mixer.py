@@ -1,11 +1,110 @@
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 import subprocess
 from typing import Any
 
 from .media import file_sha256, probe
+
+
+def render_sound_master(source: Path, output: Path, sound_effects: list[dict]) -> dict:
+    """SFX-only master: preserve picture, duck the sound bed, do not boost voice."""
+    source, output = source.resolve(), output.resolve()
+    if source == output or output.exists():
+        raise ValueError('音效后期不允许覆盖源视频或已有输出')
+    media = probe(source)
+    if not media.get('has_video') or not media.get('has_audio'):
+        raise ValueError('音效母版需要视频与原口播轨道')
+    if not sound_effects:
+        raise ValueError('音效母版没有音效事件')
+    duration = float(media['duration_seconds'])
+    rate = 48000
+    total_samples = round(duration * rate)
+    inputs, chains, labels, manifest_events = [], [], [], []
+    for i, event in enumerate(sound_effects):
+        path = Path(event.get('path') or '').resolve()
+        values = [event.get('trigger_seconds'), event.get('duration_seconds'), event.get('volume')]
+        if (not path.is_file() or any(type(v) not in (int, float) or not math.isfinite(v) for v in values)):
+            raise ValueError('音效资源或数值无效')
+        trigger, length, volume = values
+        if not 0 <= trigger < duration or not 0 < length <= duration - trigger + .001 or not 0 < volume <= .5:
+            raise ValueError('音效超出时间轴或音量上限')
+        if event.get('asset_sha256') and file_sha256(path) != event['asset_sha256']:
+            raise ValueError('音效资源哈希不匹配')
+        sound_media = probe(path)
+        if not sound_media.get('has_audio') or sound_media['duration_seconds'] + .02 < length:
+            raise ValueError('音效资源时长不足')
+        inputs.extend(['-i', str(path)])
+        label, delay = f'sfx{i}', round(trigger * rate)
+        chains.append(f'[{i+1}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,'
+                      f'atrim=end_sample={round(length * rate)},asetpts=N/SR/TB,volume={volume:.6f},'
+                      f'adelay={delay}S|{delay}S,apad,atrim=end_sample={total_samples},'
+                      f'asetpts=N/SR/TB[{label}]')
+        labels.append(f'[{label}]')
+        manifest_events.append({k: v for k, v in event.items() if k != 'path'} | {
+            'asset': {'uri': str(path), 'sha256': file_sha256(path)}})
+    chains.append(f"{''.join(labels)}amix=inputs={len(labels)}:normalize=0:duration=longest[sfxbed]")
+    # Split sidechain explicitly. Limiter level=false avoids the default gain boost;
+    # latency compensation keeps the sound transient on its requested video frame.
+    graph = ';'.join(['[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,'
+                      f'apad,atrim=end_sample={total_samples},asetpts=N/SR/TB,'
+                      'asplit=2[voice][sidechain]', *chains,
+                      '[sfxbed][sidechain]sidechaincompress=threshold=0.04:ratio=4:attack=8:release=140[ducked]',
+                      '[ducked]asplit=2[bedmix][sfxstem]',
+                      '[voice][bedmix]amix=inputs=2:normalize=0:duration=first,'
+                      'alimiter=limit=0.95:level=false:latency=true[aout]'])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = [os.environ.get('GQAI_FFMPEG', 'ffmpeg'), '-v', 'error', '-nostdin', '-n', '-i', str(source),
+               *inputs, '-filter_complex', graph, '-map', '0:v:0', '-map', '[aout]',
+               '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', str(duration),
+               '-movflags', '+faststart', str(output), '-map', '[sfxstem]', '-c:a', 'pcm_s16le',
+               '-t', str(duration), str(output.parent / 'sfx-only.wav')]
+    subprocess.run(command, check=True, capture_output=True)
+    final = probe(output)
+    if not final.get('has_audio') or abs(final['duration_seconds'] - duration) > .1:
+        raise ValueError('音效母版媒体验证失败')
+    return {'schema': 'gqai-sound-master-1.0', 'source_sha256': file_sha256(source),
+            'output': {'uri': str(output), 'sha256': file_sha256(output), 'media': final},
+            'sound_effects': manifest_events, 'verification': _sound_evidence(source, output, output.parent / 'sfx-only.wav', sound_effects),
+            'mix': {'voice_ducking': True, 'master_limiter': .95,
+                                                   'voice_gain': 1, 'video_codec': 'copy'}}
+
+
+def _sound_evidence(source: Path, output: Path, stem: Path, events: list[dict]) -> dict:
+    import array
+    ffmpeg = os.environ.get('GQAI_FFMPEG', 'ffmpeg')
+    rate, channels = 48000, 2
+    def decode(path):
+        # Keep independent stereo samples: FFmpeg's mono downmix can add 3dB
+        # for correlated channels and falsely report clipping above full scale.
+        pcm = subprocess.run([ffmpeg, '-v', 'error', '-i', str(path), '-vn', '-ac', str(channels),
+            '-ar', '48000', '-f', 'f32le', '-'], capture_output=True, check=True).stdout
+        values = array.array('f')
+        values.frombytes(pcm)
+        return values
+    before, after, sound = decode(source), decode(output), decode(stem)
+    rms = lambda values: (sum(v*v for v in values) / max(1, len(values))) ** .5
+    cue_evidence = []
+    for event in events:
+        left = round(event['trigger_seconds'] * rate) * channels
+        right = round((event['trigger_seconds'] + event['duration_seconds']) * rate) * channels
+        cue_evidence.append({'sound_id': event['sound_id'], 'trigger_seconds': event['trigger_seconds'],
+            'stem_rms': round(rms(sound[left:right]), 6), 'voice_rms': round(rms(before[left:right]), 6),
+            'output_delta_rms': round(rms([a-b for a,b in zip(after[left:right], before[left:right])]), 6)})
+    def picture_hash(path):
+        return subprocess.run([ffmpeg, '-v', 'error', '-i', str(path), '-map', '0:v:0', '-c', 'copy',
+            '-f', 'hash', '-hash', 'sha256', '-'], capture_output=True, check=True, text=True).stdout.strip()
+    channel_peaks = [max((abs(v) for v in after[i::channels]), default=0) for i in range(channels)]
+    peak = max(channel_peaks)
+    unchanged = picture_hash(source) == picture_hash(output)
+    return {'scope': 'decoded_audio_and_video_bitstream_not_subjective_listening',
+            'picture_bitstream_unchanged': unchanged, 'decoded_audio_peak': round(peak, 6),
+            'decoded_channel_peaks': [round(v, 6) for v in channel_peaks],
+            'decoded_channels': channels,
+            'sound_stem': str(stem), 'cues': cue_evidence,
+            'passed': unchanged and peak < 1 and all(c['stem_rms'] > 0 and c['output_delta_rms'] > 0 for c in cue_evidence)}
 
 
 def _seconds(value: float) -> str:

@@ -6,6 +6,52 @@ from typing import Any
 
 
 AUDIO_PLAN_SCHEMA = "gqai-audio-plan-1.0"
+SOUND_PRESETS = {
+    'whoosh': {'duration_seconds': .40, 'description': '短促扫过声，用于推进与滑入'},
+    'pop': {'duration_seconds': .20, 'description': '轻弹点，用于弹入与关键词'},
+    'click': {'duration_seconds': .16, 'description': '轻点击，用于编号与功能列表'},
+    'chime': {'duration_seconds': .55, 'description': '短双音提示，用于完成与结论'},
+    'impact': {'duration_seconds': .35, 'description': '柔和低频强调，用于重卖点'},
+}
+
+
+def synthesize_preset(name: str, output: Path) -> dict:
+    """Original deterministic PCM tones/noise; no downloaded or copied samples."""
+    import math
+    import random
+    import struct
+    import wave
+    from .media import file_sha256
+    if name not in SOUND_PRESETS:
+        raise ValueError('未知音效预设')
+    rate, duration = 48000, SOUND_PRESETS[name]['duration_seconds']
+    rng = random.Random(20261001)
+    samples, smooth_noise = [], 0.0
+    for i in range(round(rate * duration)):
+        t, p = i / rate, i / (rate * duration)
+        attack = min(1, t / .006)
+        if name == 'whoosh':
+            smooth_noise = .72 * smooth_noise + .28 * rng.uniform(-1, 1)
+            value = smooth_noise * math.sin(math.pi * p) ** 1.5
+        elif name == 'pop':
+            value = math.sin(2 * math.pi * (480 * t - 650 * t * t)) * math.exp(-t * 23)
+        elif name == 'click':
+            value = (.7 * rng.uniform(-1, 1) + .3 * math.sin(2 * math.pi * 1800 * t)) * math.exp(-t * 65)
+        elif name == 'chime':
+            value = .55 * math.sin(2 * math.pi * 880 * t) * math.exp(-t * 7)
+            if t >= .12:
+                value += .45 * math.sin(2 * math.pi * 1320 * (t - .12)) * math.exp(-(t - .12) * 9)
+        else:
+            value = (.8 * math.sin(2 * math.pi * (95 * t - 50 * t * t)) + .2 * rng.uniform(-1, 1)) * math.exp(-t * 16)
+        samples.append(value * attack * min(1, (duration - t) / .03))
+    peak = max(abs(v) for v in samples)
+    pcm = b''.join(struct.pack('<h', round(v / peak * .7 * 32767)) for v in samples)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output), 'wb') as stream:
+        stream.setparams((1, 2, rate, 0, 'NONE', 'not compressed'))
+        stream.writeframes(pcm)
+    return {'uri': str(output.resolve()), 'sha256': file_sha256(output),
+            'preset': name, 'origin': 'gqai-procedural-sfx-v1', 'sample_rate': rate, 'duration_seconds': duration}
 
 
 def _project_clock(execution_table: dict[str, Any]) -> tuple[int, int]:
@@ -145,3 +191,41 @@ def resolve_sound_effects(audio_plan: dict[str, Any], visual_table: dict[str, An
             "fade_out_seconds": int(item.get("fade_out_frames", 0)) / fps,
         })
     return resolved
+
+
+def main() -> None:
+    import argparse
+    import json
+    from .media import atomic_json
+    from .mixer import render_sound_master
+    parser = argparse.ArgumentParser(description='事件绑定音效预设与独立音频后期')
+    parser.add_argument('--catalog', action='store_true')
+    parser.add_argument('--plan', type=Path)
+    parser.add_argument('--visual', type=Path)
+    parser.add_argument('--source', type=Path)
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    if args.catalog:
+        print(json.dumps(SOUND_PRESETS, ensure_ascii=False))
+        return
+    if not all((args.plan, args.visual, args.source, args.output)):
+        parser.error('需要plan、visual、source和output')
+    plan = json.loads(args.plan.read_text('utf-8'))
+    visual = json.loads(args.visual.read_text('utf-8'))
+    assets = {}
+    for sound in plan['sound_effects']:
+        preset = sound['preset']
+        if preset not in assets:
+            assets[preset] = synthesize_preset(preset, args.output.parent / 'sfx-assets' / (preset + '.wav'))
+        sound['asset_uri'] = assets[preset]['uri']
+        sound['asset_sha256'] = assets[preset]['sha256']
+    resolved = resolve_sound_effects(plan, visual)
+    atomic_json(args.output.parent / 'audio-plan-materialized.json', plan)
+    manifest = render_sound_master(args.source, args.output, resolved)
+    manifest['preset_assets'] = assets
+    atomic_json(args.output.parent / 'sound-master-manifest.json', manifest)
+    print(json.dumps(manifest, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

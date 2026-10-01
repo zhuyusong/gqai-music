@@ -21,6 +21,12 @@ GQAI Music 是独立的音频后期系统，不属于粗剪页面，也不负责
 
 第一版只接收用户本地拥有或已获授权的音乐，不内置来源不明的曲库，也不从参考视频复制音乐。
 
+## 事件音效自由编排
+
+`python -m gqai_music.audio_plan --catalog` 返回五个本地原创合成短音预设：whoosh、pop、click、chime、impact。程序以确定性PCM合成，不下载素材或复制参考声音；每次记录来源、采样率、时长与 SHA-256。
+
+`python -m gqai_music.audio_plan --plan <音效计划> --visual <执行表> --source <视觉成片> --output <新母版>` 将事件相对音效计划解析为实际落点，输出音效母版、materialized JSON、素材哈希清单和 `sfx-only.wav`。SFX-only模式不需要背景音乐；保留视频位流与人声增益，以人声侧链压低音效，限幅器不自动抬高音量。解码证据逐事件记录真实音效能量、输出变化、音频峰值和视频位流一致性，不冒称主观听感验证。输出必须为新文件，源视频不覆盖。
+
 ## 启动
 
 ```powershell

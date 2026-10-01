@@ -1,6 +1,10 @@
 import unittest
+from pathlib import Path
+import tempfile
+import wave
+import struct
 
-from gqai_music.audio_plan import resolve_sound_effects, separate_audio_plan
+from gqai_music.audio_plan import resolve_sound_effects, separate_audio_plan, SOUND_PRESETS, synthesize_preset
 
 
 def legacy_table():
@@ -19,6 +23,21 @@ def legacy_table():
 
 
 class AudioPlanTests(unittest.TestCase):
+    def test_local_presets_are_deterministic_non_silent_pcm_with_provenance(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for name, info in SOUND_PRESETS.items():
+                first = synthesize_preset(name, Path(folder) / (name + '.wav'))
+                second = synthesize_preset(name, Path(folder) / (name + '-copy.wav'))
+                self.assertEqual(first['sha256'], second['sha256'])
+                self.assertEqual(first['origin'], 'gqai-procedural-sfx-v1')
+                with wave.open(first['uri']) as stream:
+                    self.assertEqual(stream.getframerate(), 48000)
+                    self.assertAlmostEqual(stream.getnframes() / 48000, info['duration_seconds'])
+                    samples = struct.unpack('<' + 'h' * stream.getnframes(), stream.readframes(stream.getnframes()))
+                    self.assertGreater(max(abs(v) for v in samples), 1000)
+                    self.assertLessEqual(max(abs(v) for v in samples), 23000)
+        with self.assertRaisesRegex(ValueError, '未知'):
+            synthesize_preset('../bad', Path('unused.wav'))
     def test_sfx_is_extracted_and_bound_to_visual_event(self):
         visual, plan = separate_audio_plan(legacy_table())
         self.assertEqual(visual["audio"]["sfx_events"], [])
