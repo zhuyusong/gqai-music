@@ -61,7 +61,8 @@ def render_sound_master(source: Path, output: Path, sound_effects: list[dict]) -
                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', str(duration),
                '-movflags', '+faststart', str(output), '-map', '[sfxstem]', '-c:a', 'pcm_s16le',
                '-t', str(duration), str(output.parent / 'sfx-only.wav')]
-    subprocess.run(command, check=True, capture_output=True)
+    subprocess.run(command, check=True, capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     final = probe(output)
     if not final.get('has_audio') or abs(final['duration_seconds'] - duration) > .1:
         raise ValueError('音效母版媒体验证失败')
@@ -80,7 +81,8 @@ def _sound_evidence(source: Path, output: Path, stem: Path, events: list[dict]) 
         # Keep independent stereo samples: FFmpeg's mono downmix can add 3dB
         # for correlated channels and falsely report clipping above full scale.
         pcm = subprocess.run([ffmpeg, '-v', 'error', '-i', str(path), '-vn', '-ac', str(channels),
-            '-ar', '48000', '-f', 'f32le', '-'], capture_output=True, check=True).stdout
+            '-ar', '48000', '-f', 'f32le', '-'], capture_output=True, check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         values = array.array('f')
         values.frombytes(pcm)
         return values
@@ -95,7 +97,8 @@ def _sound_evidence(source: Path, output: Path, stem: Path, events: list[dict]) 
             'output_delta_rms': round(rms([a-b for a,b in zip(after[left:right], before[left:right])]), 6)})
     def picture_hash(path):
         return subprocess.run([ffmpeg, '-v', 'error', '-i', str(path), '-map', '0:v:0', '-c', 'copy',
-            '-f', 'hash', '-hash', 'sha256', '-'], capture_output=True, check=True, text=True).stdout.strip()
+            '-f', 'hash', '-hash', 'sha256', '-'], capture_output=True, check=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
     channel_peaks = [max((abs(v) for v in after[i::channels]), default=0) for i in range(channels)]
     peak = max(channel_peaks)
     unchanged = picture_hash(source) == picture_hash(output)
@@ -249,7 +252,8 @@ def render_music_master(source: Path, music: Path, output: Path,
                     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
                     "-t", _seconds(source_duration), str(temporary)])
     try:
-        subprocess.run(command, check=True, capture_output=True)
+        subprocess.run(command, check=True, capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         result_media = probe(temporary)
         if not result_media.get("has_video") or not result_media.get("has_audio"):
             raise ValueError("音乐成片缺少视频或音频轨道")

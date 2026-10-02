@@ -25,7 +25,8 @@ def probe(path: Path) -> dict[str, Any]:
         os.environ.get("GQAI_FFPROBE", "ffprobe"), "-v", "error",
         "-show_entries", "format=duration,size:stream=codec_type,width,height,avg_frame_rate",
         "-of", "json", str(path),
-    ], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    ], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     payload = json.loads(completed.stdout)
     streams = payload.get("streams", [])
     video = next((item for item in streams if item.get("codec_type") == "video"), None)
