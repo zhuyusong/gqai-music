@@ -1,5 +1,9 @@
 # GQAI Music
 
+本仓库同时托管 GQAI Studio Windows 便携版的[公开下载](https://github.com/zhuyusong/gqai-music/releases)。下载完整 ZIP 并解压，双击 `GQAI Studio.exe`；校验文件和离线验证报告随每次发行提供。
+
+Music 源码公开；Roughcut 与 Core 源码仓库保持私有。公开安装包只分发这两个系统的编译模块及必要界面资源，不附带明文 Python 源码、测试或开发文档。编译模块仍可能被逆向。构建机具备同级私有项目和运行依赖时，可运行 `build-studio.ps1 -Aoci <aoci.exe> -Browser <chrome-headless-shell.exe>`，产物保存在本仓库 `dist/releases/`。
+
 GQAI Music 是独立的音频后期系统，不属于粗剪页面，也不负责字幕或视觉特效。它统一处理背景音乐和与画面事件绑定的一次性音效。
 
 它接收粗剪或其他系统交接的视频，管理背景音乐素材和混音参数，输出：
